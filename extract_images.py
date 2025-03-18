@@ -1,4 +1,7 @@
 """
+Run this CMD in terminal before you run the code: pip install selenium webdriver-manager
+"""
+"""
 uses Selenium to capture screenshots of specific elements (tables, images, graphs)
 from a webpage and saves them in organized directories along with the full page HTML.
 """
