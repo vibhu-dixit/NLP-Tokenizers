@@ -10,199 +10,244 @@ from a webpage and saves them in organized directories along with the full page 
 import os
 import time
 import logging
-import shutil 
-# Import Selenium components
+import shutil
+import hashlib
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+from PIL import Image
 
-# Configure logging system
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('scraper.log'),  # Log to file
-        logging.StreamHandler()              # Log to console
+        logging.FileHandler('scraper.log'),
+        logging.StreamHandler()
     ]
 )
 
-# ======================
-# CONFIGURATION SETTINGS
-# ======================
-URL = "https://www.bea.gov/news/glance"  # Target webpage URL
-OUTPUT_DIR = "webpage_elements"                       # Root directory for outputs
+# Ask for website URL at runtime
+website_url = input("Enter the website URL: ")
 
-# Element configuration dictionary defining what to capture
-ELEMENT_CONFIG = {
-    'tables': {'selector': 'table'},  # HTML tables
-    'images': {'selector': 'img'},    # All images
-    'graphs': {'selector': 'svg, canvas, div[class*="chart"], div[class*="graph"]'}  # Charts/graphs
+# Configuration
+CONFIG = {
+    'url': website_url,
+    'output_dir': "webpage_elements",
+    'fullpage_dir': "full_page",
+    'html_save_path': "saved_page.html",
+    'min_container_width': 300,  # Minimum width in pixels
+    'min_container_height': 150,  # Minimum height in pixels
+    'container_selectors': {
+        'image_containers': [
+            '//figure[contains(@class, "mw-default-size")]',
+            '//div[contains(@class, "thumb")]',
+            '//div[contains(@class, "image-container")]'
+        ],
+        'tables': '//table[not(ancestor::div[contains(@class, "navbox")])]',
+        'graphs': '//div[contains(@class, "chart") or contains(@class, "graph")]'
+    },
+    'exclude_selectors': [
+        '.navbox', 
+        '.sidebar', 
+        '.mw-logo',
+        '.vector-header-container'
+    ],
+    'scroll_padding': 50,
+    'wait_timeout': 15
 }
 
-def cleanup():
-    """Remove all files and directories before running the scraper"""
-    if os.path.exists(OUTPUT_DIR):
-        logging.info(f"Cleaning up output directory: {OUTPUT_DIR}")
-        shutil.rmtree(OUTPUT_DIR)  # Remove the entire directory and its contents
-    logging.info("Cleanup complete")
+captured_hashes = set()
 
-def setup_driver():
-    """
-    Configure and initialize Chrome WebDriver with headless options
-    Returns: WebDriver instance
-    """
+def initialize_environment():
+    """Set up directory structure and clean previous runs"""
     try:
-        # Configure Chrome options
-        chrome_options = webdriver.ChromeOptions()
-        chrome_options.add_argument('--headless')          # Run browser in background
-        chrome_options.add_argument('--no-sandbox')        # Disable sandboxing
-        chrome_options.add_argument('--disable-dev-shm-usage')  # Prevent shared memory issues
-        chrome_options.add_argument('--window-size=1920x1080')  # Set browser window size
-
-        # Automatic ChromeDriver management
-        service = Service(ChromeDriverManager().install())  # Handles driver executable
+        if os.path.exists(CONFIG['output_dir']):
+            shutil.rmtree(CONFIG['output_dir'])
+            
+        os.makedirs(CONFIG['output_dir'], exist_ok=True)
+        os.makedirs(os.path.join(CONFIG['output_dir'], CONFIG['fullpage_dir']), exist_ok=True)
         
-        # Initialize Chrome driver
-        driver = webdriver.Chrome(
-            service=service,
-            options=chrome_options
-        )
-        driver.set_page_load_timeout(30)  # Set page load timeout to 30 seconds
-        logging.info("Chrome driver initialized successfully")
+        logging.info("Environment initialized")
+        
+    except Exception as e:
+        logging.error(f"Environment setup failed: {str(e)}")
+        raise
+
+def create_driver():
+    """Configure and initialize headless Chrome"""
+    try:
+        chrome_options = webdriver.ChromeOptions()
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--window-size=1920,1080')
+        
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver.set_page_load_timeout(30)
+        
+        logging.info("Chrome instance created")
         return driver
     
     except Exception as e:
-        logging.error(f"Driver setup failed: {str(e)}")
+        logging.error(f"Driver creation failed: {str(e)}")
         raise
 
-def create_directories():
-    """
-    Create output directory structure:
-    - webpage_elements/
-      |- tables/
-      |- images/
-      |- graphs/
-    """
-    try:
-        # Create root directory if not exists
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        
-        # Create subdirectories for each element type
-        for folder in ELEMENT_CONFIG.keys():
-            os.makedirs(os.path.join(OUTPUT_DIR, folder), exist_ok=True)
-        
-        logging.info("Created output directories")
-    
-    except Exception as e:
-        logging.error(f"Directory creation failed: {str(e)}")
-        raise
+def get_container_hash(element):
+    """Create unique identifier for containers to prevent duplicates"""
+    location = element.location
+    size = element.size
+    hash_string = f"{location['x']}_{location['y']}_{size['width']}_{size['height']}"
+    return hashlib.md5(hash_string.encode()).hexdigest()
 
-def capture_element_screenshot(driver, element, category, index):
-    """
-    Capture and save screenshot of a web element
-    Args:
-        driver: WebDriver instance
-        element: WebElement to capture
-        category: Type of element (tables/images/graphs)
-        index: Numerical identifier for the element
-    """
+def is_valid_container(element):
+    """Validate container meets size requirements and visibility"""
     try:
-        # Generate filename and path
-        filename = f"{category}_{index}.png"
-        filepath = os.path.join(OUTPUT_DIR, category, filename)
-        
-        # Scroll element into view with smooth animation
-        driver.execute_script(
-            "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", 
-            element
-        )
-        time.sleep(0.5)  # Allow time for rendering after scroll
-        
-        # Capture element screenshot
-        element.screenshot(filepath)
-        logging.info(f"Saved {category} #{index}")
-    
+        size = element.size
+        return all([
+            element.is_displayed(),
+            size['width'] >= CONFIG['min_container_width'],
+            size['height'] >= CONFIG['min_container_height']
+        ])
+    except Exception:
+        return False
+
+def save_page_html(driver):
+    """Save the HTML source code of the page"""
+    try:
+        with open(CONFIG['html_save_path'], 'w', encoding='utf-8') as file:
+            file.write(driver.page_source)
+        logging.info(f"Page HTML saved: {CONFIG['html_save_path']}")
     except Exception as e:
-        logging.warning(f"Failed to capture {category} #{index}: {str(e)}")
+        logging.error(f"Saving HTML failed: {str(e)}")
+
+def capture_full_page_screenshot(driver):
+    """Capture full page screenshot by scrolling and stitching images"""
+    try:
+        total_width = driver.execute_script("return document.body.scrollWidth")
+        total_height = driver.execute_script("return document.body.scrollHeight")
+        viewport_height = driver.execute_script("return window.innerHeight")
+        driver.set_window_size(total_width, viewport_height)
+
+        timestamp = int(time.time())
+        fullpage_path = os.path.join(CONFIG['output_dir'], CONFIG['fullpage_dir'], f"fullpage_{timestamp}.png")
+
+        stitched_image = Image.new('RGB', (total_width, total_height))
+        current_y = 0
+
+        for y in range(0, total_height, viewport_height):
+            driver.execute_script(f"window.scrollTo(0, {y})")
+            time.sleep(0.5)
+            temp_path = f"temp_screenshot_{y}.png"
+            driver.save_screenshot(temp_path)
+            screenshot = Image.open(temp_path)
+            stitched_image.paste(screenshot, (0, current_y))
+            current_y += screenshot.size[1]
+            os.remove(temp_path)
+
+        stitched_image.save(fullpage_path)
+        logging.info(f"Full page screenshot saved: {fullpage_path}")
+    except Exception as e:
+        logging.error(f"Full page capture failed: {str(e)}")
+
+def capture_container(driver, container, container_type):
+    """Capture screenshot of validated container"""
+    try:
+        container_hash = get_container_hash(container)
+        if container_hash in captured_hashes or not is_valid_container(container):
+            return
+            
+        # Scroll to container
+        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", container)
+        time.sleep(0.5)  # Allow for rendering
+        
+        # Create output filename
+        timestamp = int(time.time())
+        filename = f"{container_type}_{timestamp}_{container_hash[:6]}.png"
+        output_path = os.path.join(CONFIG['output_dir'], filename)
+        
+        # Capture and save
+        container.screenshot(output_path)
+        captured_hashes.add(container_hash)
+        logging.info(f"Captured {container_type} container: {filename}")
+        
+    except Exception as e:
+        logging.warning(f"Container capture failed: {str(e)}")
+
+def find_content_containers(driver):
+    """Locate relevant content containers excluding navigation elements"""
+    logging.info("Identifying content containers")
+    
+    containers = []
+    
+    # Find image containers
+    for xpath in CONFIG['container_selectors']['image_containers']:
+        containers.extend(driver.find_elements(By.XPATH, xpath))
+    
+    # Find tables and graphs
+    for element_type in ['tables', 'graphs']:
+        containers.extend(driver.find_elements(By.XPATH, CONFIG['container_selectors'][element_type]))
+    
+    # Filter out excluded elements
+    filtered = []
+    for container in containers:
+        try:
+            if not container.find_elements(By.XPATH, 'ancestor::*[{}]'.format(
+                ' or '.join([f'contains(@class, "{cls}")' for cls in CONFIG['exclude_selectors']])
+            )):
+                filtered.append(container)
+        except Exception:
+            continue
+            
+    logging.info(f"Found {len(filtered)} valid containers")
+    return filtered
 
 def process_page(driver):
-    """
-    Main processing workflow:
-    1. Save full page HTML
-    2. Capture screenshots of configured elements
-    """
+    """Main processing workflow"""
     try:
-        # Save complete page HTML
-        with open(os.path.join(OUTPUT_DIR, 'full_page.html'), 'w', encoding='utf-8') as f:
-            f.write(driver.page_source)
-            logging.info("Saved full page HTML")
+
+        # Save HTML content
+        save_page_html(driver)
+
+        # Capture full page first
+        capture_full_page_screenshot(driver)
         
-        # Process each element category
-        for category, config in ELEMENT_CONFIG.items():
-            logging.info(f"Processing {category} elements...")
+        # Find and process containers
+        containers = find_content_containers(driver)
+        for idx, container in enumerate(containers, 1):
+            container_type = "image" if idx <= len(CONFIG['container_selectors']['image_containers']) else "content"
+            capture_container(driver, container, container_type)
             
-            # Wait for elements to be present in DOM
-            elements = WebDriverWait(driver, 15).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, config['selector']))
-            )
-            
-            if not elements:
-                logging.warning(f"No {category} elements found")
-                continue
-                
-            logging.info(f"Found {len(elements)} {category} elements")
-            
-            # Capture each element
-            for idx, element in enumerate(elements, 1):
-                capture_element_screenshot(driver, element, category, idx)
-                
     except Exception as e:
-        logging.error(f"Page processing failed: {str(e)}")
+        logging.error(f"Processing failed: {str(e)}")
         raise
 
-def main():
-    """
-    Main execution sequence:
-    1. Create directories
-    2. Initialize browser
-    3. Load webpage
-    4. Process elements
-    5. Cleanup resources
-    """
+def execute_workflow():
+    """Main execution controller"""
+    driver = None
     try:
-        cleanup()  # Clear existing files
-        # Initialize directory structure
-        create_directories()
+        initialize_environment()
+        driver = create_driver()
         
-        # Launch browser
-        driver = setup_driver()
+        logging.info(f"Loading: {CONFIG['url']}")
+        driver.get(CONFIG['url'])
         
-        # Load target webpage
-        logging.info(f"Loading page: {URL}")
-        driver.get(URL)
-        
-        # Wait for full page load
-        WebDriverWait(driver, 20).until(
-            lambda d: d.execute_script('return document.readyState') == 'complete'
+        WebDriverWait(driver, CONFIG['wait_timeout']).until(
+            EC.presence_of_element_located((By.XPATH, "//body"))
         )
-        logging.info("Page loaded completely")
-        
-        # Process page elements
         process_page(driver)
         logging.info("Operation completed successfully")
-    
+        
     except Exception as e:
-        logging.error(f"Main execution failed: {str(e)}")
-    
+        logging.error(f"Workflow failed: {str(e)}")
     finally:
-        # Cleanup browser instance
-        if 'driver' in locals():
+        if driver:
             driver.quit()
-            logging.info("Browser closed")
+            logging.info("Browser instance closed")
 
 if __name__ == "__main__":
-    # Entry point of the script
-    main()
+    execute_workflow()
