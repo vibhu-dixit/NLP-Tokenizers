@@ -240,3 +240,59 @@ if st.session_state.extracted_data:
         f"Download as {data['format']}"
     )
     st.markdown(download_link, unsafe_allow_html=True)
+
+# Q&A Section
+if st.session_state.extracted_data:
+    st.markdown("---")
+    st.header("Ask Questions About Your Table")
+    st.markdown("Ask questions about the extracted table data. Questions unrelated to the table will not be answered.")
+    
+    # Create columns for the question input and button
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        question = st.text_input("Your question:", key="table_question")
+    with col2:
+        submit_question = st.button("Ask", use_container_width=True)
+    
+    if submit_question and question:
+        try:
+            # Check if API key is available
+            if not GEMINI_API_KEY:
+                st.error("Please provide a valid Gemini API key to use the Q&A feature.")
+                st.stop()
+            
+            with st.spinner("Processing your question..."):
+                # Configure Gemini API (should already be configured from earlier)
+                genai.configure(api_key=GEMINI_API_KEY)
+                model = genai.GenerativeModel('gemini-2.0-flash-lite-001')
+                
+                # Create context from the extracted data
+                table_content = st.session_state.extracted_data["content"]
+                
+                # Create prompt for the Q&A
+                qa_prompt = f"""
+                Table data: 
+                {table_content}
+                
+                Question: {question}
+                
+                Instructions:
+                1. If the question is related to the table data, answer it accurately and concisely.
+                2. If the question is NOT related to the table data, respond with "UNRELATED" only.
+                """
+                
+                # Process with Gemini
+                response = model.generate_content(qa_prompt)
+                answer = response.text.strip()
+                
+                # Display answer or message about unrelated question
+                if answer == "UNRELATED":
+                    st.warning("Your question does not appear to be related to the table data.")
+                else:
+                    st.success("Answer:")
+                    st.write(answer)
+                    
+        except Exception as e:
+            st.error(f"An error occurred while processing your question: {str(e)}")
+            with st.expander("See error details"):
+                st.text(traceback.format_exc())
