@@ -9,7 +9,7 @@ from getImages import screenshot_table
 import base64
 
 # Set your API key here
-GEMINI_API_KEY = ""  # Replace with your actual API key
+GEMINI_API_KEY = "AIzaSyBQZ5Dnedsn62074kojZBQKVAUVvuh8Z54"  # Replace with your actual API key
 
 # Set page configuration
 st.set_page_config(page_title="Table Extractor", layout="wide")
