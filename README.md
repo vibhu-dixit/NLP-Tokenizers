@@ -1,10 +1,12 @@
-To run the code:
+- To run the code:
 
-  streamlit run .\app.py
-Test input:
+        streamlit run .\app.py
 
-https://www.worldometers.info/world-population/
+- Test input:
 
-World Population (2025 and historical)
+    https://www.worldometers.info/world-population/
+  
+    World Population (2025 and historical)
+  
+    format: json, csv, HTML
 
-format: json, csv, HTML
