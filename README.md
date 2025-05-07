@@ -1,5 +1,4 @@
 # NLP-Tokenizers
 
-To run the script: python fetchTablev3.py url "title"
+##Please check the Surya branch, it contains the latest and final code.
 
-example: python .\fetchTablev3.py https://www.worldometers.info/world-population/ "World Population by Region"
